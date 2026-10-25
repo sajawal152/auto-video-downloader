@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101827">
+<title>Auto Video Downloader</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121d30;--line:#2b3b55;--text:#f3f6fc;--muted:#a8b5ca;--accent:#d8b35a}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at top,#172944 0,#0b1220 60%);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--text);display:grid;place-items:center;padding:20px}
+main{width:min(100%,650px)}.brand{font-size:13px;letter-spacing:.18em;color:var(--accent);font-weight:800;text-transform:uppercase;text-align:center;margin-bottom:14px}
+h1{text-align:center;font-size:clamp(28px,6vw,42px);margin:0 0 10px;line-height:1.1} .sub{text-align:center;color:var(--muted);line-height:1.6;margin:0 auto 28px;max-width:510px}
+.card{background:rgba(18,29,48,.95);border:1px solid var(--line);border-radius:22px;padding:clamp(18px,4vw,28px);box-shadow:0 18px 55px #0005}
+label{display:block;font-size:14px;font-weight:700;margin-bottom:10px}
+.inputrow{display:flex;gap:9px;flex-wrap:wrap}input{flex:1;min-width:0;width:100%;background:#0a1220;border:1px solid #3a4b66;border-radius:12px;padding:15px 14px;color:var(--text);font-size:15px;outline:none}input:focus{border-color:var(--accent);box-shadow:0 0 0 3px #d8b35a22}
+button,.download{border:0;border-radius:12px;background:var(--accent);color:#1b1a15;font-weight:800;padding:14px 18px;font-size:15px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px}button:disabled{opacity:.55;cursor:wait}.hint{font-size:12px;color:var(--muted);line-height:1.5;margin:10px 0 0}
+.status{margin-top:18px;padding:13px 14px;border:1px solid var(--line);border-radius:12px;color:var(--muted);font-size:14px;line-height:1.55;overflow-wrap:anywhere}.status.good{border-color:#2d8062;color:#b6f1d6}.status.warn{border-color:#9b7737;color:#f4d99b}.status.error{border-color:#9b4d56;color:#ffc3c8}
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.actions[hidden]{display:none}.preview{width:100%;max-height:300px;margin-top:15px;border-radius:12px;background:#05080e}.preview[hidden]{display:none}
+footer{font-size:12px;color:var(--muted);text-align:center;line-height:1.6;margin:18px 8px 0}.footerlinks{margin-top:9px}
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">Simple • Fast • Free</div>
+  <h1>Auto Video Downloader</h1>
+  <p class="sub">Paste a direct video-file link. The site will check it and try to start the download automatically.</p>
+  <section class="card">
+    <label for="url">Direct video URL</label>
+    <div class="inputrow">
+      <input id="url" type="url" inputmode="url" autocomplete="url" placeholder="https://example.com/video.mp4" aria-describedby="hint">
+      <button id="pasteBtn" type="button" title="Paste from clipboard">Paste</button>
+    </div>
+    <p class="hint" id="hint">Supports direct links to MP4, WebM, MOV and other browser-playable video files. It does not download videos from social-media page URLs.</p>
+    <div id="status" class="status" role="status" aria-live="polite">Paste a video URL to begin.</div>
+    <video id="preview" class="preview" controls playsinline hidden></video>
+    <div id="actions" class="actions" hidden>
+      <a id="downloadLink" class="download" href="#" download>⬇ Download video</a>
+      <a id="openLink" class="download" href="#" target="_blank" rel="noopener noreferrer">Open video</a>
+    </div>
+  </section>
+  <footer>
+    Download only videos you own or have permission to save. Some hosts block cross-origin requests or force in-browser playback, so automatic download cannot be guaranteed for every URL.
+    <div class="footerlinks">No login • No uploads to our server • Works best with public direct video URLs</div>
+  </footer>
+</main>
+<script>
+const input = document.getElementById('url');
+const statusBox = document.getElementById('status');
+const preview = document.getElementById('preview');
+const actions = document.getElementById('actions');
+const downloadLink = document.getElementById('downloadLink');
+const openLink = document.getElementById('openLink');
+const pasteBtn = document.getElementById('pasteBtn');
+let debounceTimer;
+let currentUrl = '';
+
+function setStatus(message, kind='') {
+  statusBox.className = 'status' + (kind ? ' ' + kind : '');
+  statusBox.textContent = message;
+}
+function isHttpUrl(value) {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch { return false; }
+}
+function hasVideoExtension(value) {
+  try {
+    const path = new URL(value).pathname.toLowerCase();
+    return /\.(mp4|webm|mov|m4v|ogv|ogg|mkv|avi)(?:$)/.test(path);
+  } catch { return false; }
+}
+function clearResult() {
+  actions.hidden = true;
+  preview.hidden = true;
+  preview.removeAttribute('src');
+  preview.load();
+  currentUrl = '';
+}
+function startCheck(raw) {
+  const value = raw.trim();
+  clearResult();
+  if (!value) {
+    setStatus('Paste a direct video URL to begin.');
+    return;
+  }
+  if (!isHttpUrl(value)) {
+    setStatus('Please enter a valid http:// or https:// URL.', 'error');
+    return;
+  }
+  currentUrl = value;
+  downloadLink.href = value;
+  openLink.href = value;
+  // A download attribute is only reliably honored for same-origin URLs and some
+  // cross-origin URLs; this fallback link remains available regardless.
+  downloadLink.download = filenameFromUrl(value) || 'video';
+  actions.hidden = false;
+  if (!hasVideoExtension(value)) {
+    setStatus('URL format accepted. The link does not end in a common video extension, so it may be a signed or extensionless video URL. Checking playback…', 'warn');
+  } else {
+    setStatus('Checking video availability…');
+  }
+  preview.src = value;
+  preview.hidden = false;
+  preview.onloadedmetadata = () => {
+    if (currentUrl !== value) return;
+    setStatus('Video is reachable in your browser. Trying automatic download…', 'good');
+    // Try the browser download behavior; the explicit download link is the fallback.
+    const a = document.createElement('a');
+    a.href = value;
+    a.download = filenameFromUrl(value) || 'video';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => {
+      if (currentUrl === value) setStatus('Download was requested. If no file appeared, tap “Download video” or “Open video”. Some video hosts block automatic downloads.', 'warn');
+    }, 1200);
+  };
+  preview.onerror = () => {
+    if (currentUrl !== value) return;
+    setStatus('The browser could not preview this URL. The host may block cross-origin access, require authorization, or the link may not be a direct video file. Try “Open video” or use a public direct-file link.', 'error');
+    preview.hidden = true;
+  };
+  // Avoid a forever-loading state on hosts that never return usable media metadata.
+  setTimeout(() => {
+    if (currentUrl === value && preview.readyState === 0) {
+      setStatus('Still waiting for the video host. It may block browser access. Try “Open video” or use a direct public file link.', 'warn');
+    }
+  }, 7000);
+}
+function filenameFromUrl(value) {
+  try {
+    const path = new URL(value).pathname;
+    const last = decodeURIComponent(path.split('/').filter(Boolean).pop() || '');
+    return last && /\.[a-z0-9]{2,5}$/i.test(last) ? last : '';
+  } catch { return ''; }
+}
+input.addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  const value = input.value.trim();
+  if (!value) { clearResult(); setStatus('Paste a video URL to begin.'); return; }
+  // Wait for typing to stop, so partial URLs aren't checked.
+  debounceTimer = setTimeout(() => startCheck(value), 900);
+});
+input.addEventListener('paste', () => {
+  setTimeout(() => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => startCheck(input.value), 250);
+  }, 0);
+});
+pasteBtn.addEventListener('click', async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    input.value = text;
+    startCheck(text);
+  } catch {
+    input.focus();
+    setStatus('Clipboard access is unavailable. Long-press the box and choose Paste.', 'warn');
+  }
+});
+input.addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
+    clearTimeout(debounceTimer);
+    startCheck(input.value);
+  }
+});
+</script>
+</body>
+</html>
